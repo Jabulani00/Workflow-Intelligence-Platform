@@ -1,0 +1,38 @@
+{
+  "id": "wip-wf-14-reminder",
+  "name": "WF-14 Reminder Engine",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "node-manual", "name": "Manual Trigger", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [-260, 220]
+    },
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "cronExpression", "expression": "0 16 * * 1-5" } ] }
+      },
+      "id": "node-cron", "name": "Weekdays 16:00", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [-260, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH targets AS (\n  SELECT u.user_id, u.email FROM users u\n  WHERE u.role='EMPLOYEE' AND u.status='ACTIVE'\n  AND NOT EXISTS (SELECT 1 FROM weekly_reports w WHERE w.user_id=u.user_id\n     AND w.iso_year=EXTRACT(ISOYEAR FROM CURRENT_DATE)::int\n     AND w.iso_week=EXTRACT(WEEK FROM CURRENT_DATE)::int\n     AND w.status IN ('SUBMITTED','UNDER_REVIEW','APPROVED','LOCKED'))\n  AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.user_id=u.user_id\n     AND n.type='WEEKLY_REMINDER' AND n.created_at > now() - interval '12 hours')\n)\nINSERT INTO notifications (user_id, type, message)\nSELECT user_id, 'WEEKLY_REMINDER', 'Reminder: your weekly report for this week is not submitted yet.'\nFROM targets\nRETURNING user_id, message",
+        "options": {}
+      },
+      "id": "node-pg", "name": "Find & Remind (Postgres)", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [-20, 320],
+      "credentials": { "postgres": { "id": "wip-pg-cred-0001", "name": "WIP Postgres" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Summarise how many reminders were created this run.\nconst count = items.length && items[0].json.user_id ? items.length : 0;\nconsole.log(`[WF-14] Weekly reminders created: ${count}`);\nreturn [{ json: { reminders_created: count, ran_at: new Date().toISOString() } }];"
+      },
+      "id": "node-log", "name": "Log Result", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [220, 320]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": { "main": [[{ "node": "Find & Remind (Postgres)", "type": "main", "index": 0 }]] },
+    "Weekdays 16:00": { "main": [[{ "node": "Find & Remind (Postgres)", "type": "main", "index": 0 }]] },
+    "Find & Remind (Postgres)": { "main": [[{ "node": "Log Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

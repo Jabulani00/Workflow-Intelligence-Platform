@@ -1,0 +1,39 @@
+{
+  "id": "wip-wf-21-register",
+  "name": "WF-21 Registration",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "register", "responseMode": "responseNode", "options": { "allowedOrigins": "*" } },
+      "id": "node-webhook", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-260, 300], "webhookId": "wip-register"
+    },
+    {
+      "parameters": {
+        "jsCode": "// WF-21: public registration. Body: { full_name, email, phone?, whatsapp?, department?, position? }\nconst b = $json.body || $json;\nconst name = String(b.full_name || '').trim();\nconst email = String(b.email || '').toLowerCase().trim();\nconst phone = b.phone || null;\nconst wa = b.whatsapp || null;\nconst dept = b.department || null;\nconst pos = b.position || null;\nconst emailRe = /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/;\nlet err = null;\nif (!name) err = 'full_name is required';\nelse if (!emailRe.test(email)) err = 'a valid email is required';\n\nlet sql, params;\nif (err) { sql = `SELECT 'ERR' AS err`; params = []; }\nelse {\n  sql = `WITH ins AS (\n  INSERT INTO users (full_name, email, phone, whatsapp, department, position, role, status)\n  VALUES ($1,$2,$3,$4,$5,$6,'EMPLOYEE','PENDING')\n  ON CONFLICT (email) DO NOTHING\n  RETURNING user_id, email, status\n),\naud AS (\n  INSERT INTO audit_logs (actor_id, action, record_id, metadata)\n  SELECT user_id, 'USER_REGISTERED', user_id, json_build_object('email', email) FROM ins RETURNING 1\n),\nnotif AS (\n  INSERT INTO notifications (user_id, type, message)\n  SELECT adm.user_id, 'NEW_REGISTRATION', 'New registration pending approval: ' || $2\n  FROM users adm WHERE adm.role='ADMIN' AND EXISTS(SELECT 1 FROM ins) RETURNING 1\n)\nSELECT email, status FROM ins`;\n  params = [name, email, phone, wa, dept, pos];\n}\nreturn [{ json: { err, email, sql, params } }];"
+      },
+      "id": "node-build", "name": "Build Registration", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-40, 300]
+    },
+    {
+      "parameters": { "operation": "executeQuery", "query": "={{ $json.sql }}", "options": { "queryReplacement": "={{ $json.params }}" } },
+      "id": "node-pg", "name": "Run Registration (Postgres)", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [200, 300], "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "wip-pg-cred-0001", "name": "WIP Postgres" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const built = $('Build Registration').first().json;\nconst d = $json || {};\nlet reply;\nif (built.err) reply = '\\u26a0\\ufe0f ' + built.err;\nelse if (d.email) reply = `\\ud83d\\udcdd Registration submitted for ${d.email}. Status: ${d.status}. An admin will review it.`;\nelse reply = `\\u26a0\\ufe0f ${built.email} is already registered.`;\nreturn [{ json: { reply, status: d.status || null } }];"
+      },
+      "id": "node-format", "name": "Format Reply", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [440, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ { \"reply\": $json.reply, \"status\": $json.status } }}", "options": {} },
+      "id": "node-respond", "name": "Respond", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.1, "position": [660, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Build Registration", "type": "main", "index": 0 }]] },
+    "Build Registration": { "main": [[{ "node": "Run Registration (Postgres)", "type": "main", "index": 0 }]] },
+    "Run Registration (Postgres)": { "main": [[{ "node": "Format Reply", "type": "main", "index": 0 }]] },
+    "Format Reply": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

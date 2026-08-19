@@ -1,0 +1,16 @@
+# ─── Secrets — NEVER commit ───
+# WIP.env.txt : Supabase keys + DB password (rotate & delete)
+# .env : local environment values
+# workflows/_credentials.json : real n8n credential (has DB password)
+WIP.env.txt
+.env
+workflows/_credentials.json
+
+# ─── Local / generated ───
+*.log
+scratchpad/
+
+# ─── OS junk ───
+Thumbs.db
+.DS_Store
+desktop.ini

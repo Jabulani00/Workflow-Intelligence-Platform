@@ -1,0 +1,81 @@
+{
+  "id": "wip-wf-02-router",
+  "name": "WF-02 Chatbot Router",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chatbot",
+        "responseMode": "responseNode",
+        "options": { "allowedOrigins": "*" }
+      },
+      "id": "node-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 300],
+      "webhookId": "wip-chatbot"
+    },
+    {
+      "parameters": {
+        "jsCode": "// WF-02: Detect the command WITHOUT calling AI (token-saving architecture).\n// Accepts either a structured { email, action, ... } or free-text { email, message }.\nconst b = $json.body || $json;\nconst email = String(b.email || '').toLowerCase().trim();\nlet action = String(b.action || '').toUpperCase().trim();\nconst msgRaw = String(b.message || '').trim();\nconst msg = msgRaw.toLowerCase();\nlet description = b.description || '';\nlet category = b.category || 'General';\n\n// Simple keyword intent detection (no Gemini needed for these).\nif (!action && msg) {\n  if (/clock\\s*me?\\s*in|check\\s*in/.test(msg)) action = 'CLOCK_IN';\n  else if (/clock\\s*me?\\s*out|check\\s*out/.test(msg)) action = 'CLOCK_OUT';\n  else if (/submit.*(report|week)|submit my/.test(msg)) action = 'SUBMIT_WEEK';\n  else if (/(i am|i'm|im)\\s+sick|report sick|sick today/.test(msg)) action = 'REPORT_SICK';\n  else if (/what.*hours|show.*week|my week|this week/.test(msg)) action = 'GET_WEEK';\n  else if (/show.*today|my day|today\\b/.test(msg)) action = 'GET_TODAY';\n  else if (/worked on|i worked|today i|i did|completed/.test(msg)) action = 'ADD_WORK_ENTRY';\n  else action = 'UNKNOWN';\n}\n\nif (action === 'ADD_WORK_ENTRY' && !description) {\n  description = msgRaw.replace(/^(today\\s+)?(i\\s+)?(worked on|did|worked|completed)\\s*/i, '').trim() || msgRaw;\n}\nif (action === 'REPORT_SICK' && !description) description = msgRaw || 'Reported sick via chatbot';\n\nif (!email) action = 'NO_EMAIL';\n\n// Build a single, parameterised query per action ($1 = email, then extras).\nlet sql = 'SELECT 1 AS ok';\nlet params = [];\nswitch (action) {\n  case 'CLOCK_IN':\n    sql = `WITH u AS (SELECT user_id FROM users WHERE email=$1)\nINSERT INTO attendance (user_id, work_date, clock_in)\nSELECT u.user_id, CURRENT_DATE, now() FROM u\nON CONFLICT (user_id, work_date) DO UPDATE SET clock_in = COALESCE(attendance.clock_in, now())\nRETURNING to_char(clock_in,'HH24:MI') AS clock_in, work_date`;\n    params = [email];\n    break;\n  case 'CLOCK_OUT':\n    sql = `WITH u AS (SELECT user_id FROM users WHERE email=$1)\nUPDATE attendance a SET clock_out = now(),\n  total_minutes = ROUND(EXTRACT(EPOCH FROM (now() - a.clock_in))/60)\nFROM u WHERE a.user_id=u.user_id AND a.work_date=CURRENT_DATE AND a.clock_in IS NOT NULL\nRETURNING to_char(a.clock_out,'HH24:MI') AS clock_out, a.total_minutes`;\n    params = [email];\n    break;\n  case 'ADD_WORK_ENTRY':\n    sql = `WITH u AS (SELECT user_id FROM users WHERE email=$1)\nINSERT INTO daily_work_entries (user_id, work_date, description, category)\nSELECT u.user_id, CURRENT_DATE, $2, $3 FROM u\nRETURNING description, category, work_date`;\n    params = [email, description, category];\n    break;\n  case 'GET_TODAY':\n    sql = `WITH u AS (SELECT user_id FROM users WHERE email=$1)\nSELECT\n  (SELECT to_char(clock_in,'HH24:MI') FROM attendance a WHERE a.user_id=u.user_id AND work_date=CURRENT_DATE) AS clock_in,\n  (SELECT to_char(clock_out,'HH24:MI') FROM attendance a WHERE a.user_id=u.user_id AND work_date=CURRENT_DATE) AS clock_out,\n  (SELECT string_agg(description, '; ') FROM daily_work_entries d WHERE d.user_id=u.user_id AND work_date=CURRENT_DATE) AS work\nFROM u`;\n    params = [email];\n    break;\n  case 'GET_WEEK':\n    sql = `WITH u AS (SELECT user_id FROM users WHERE email=$1)\nSELECT COALESCE(json_agg(row_to_json(x)),'[]') AS days FROM (\n  SELECT to_char(work_date,'Dy DD Mon') AS day, to_char(clock_in,'HH24:MI') AS clock_in,\n         to_char(clock_out,'HH24:MI') AS clock_out, total_minutes\n  FROM attendance a JOIN u ON a.user_id=u.user_id\n  WHERE date_trunc('week',work_date)=date_trunc('week',CURRENT_DATE)\n  ORDER BY work_date\n) x`;\n    params = [email];\n    break;\n  case 'SUBMIT_WEEK':\n    sql = `WITH u AS (SELECT user_id FROM users WHERE email=$1)\nINSERT INTO weekly_reports (user_id, iso_year, iso_week, status, submitted_at)\nSELECT u.user_id, EXTRACT(ISOYEAR FROM CURRENT_DATE)::int, EXTRACT(WEEK FROM CURRENT_DATE)::int, 'SUBMITTED', now() FROM u\nON CONFLICT (user_id, iso_year, iso_week)\nDO UPDATE SET status='SUBMITTED', submitted_at=now(), version = weekly_reports.version + 1\nRETURNING iso_week, status`;\n    params = [email];\n    break;\n  case 'REPORT_SICK':\n    sql = `WITH u AS (SELECT user_id FROM users WHERE email=$1)\nINSERT INTO leave_requests (user_id, leave_type, start_date, end_date, reason, status)\nSELECT u.user_id, 'SICK', CURRENT_DATE, CURRENT_DATE, $2, 'SUBMITTED' FROM u\nRETURNING leave_type, to_char(start_date,'YYYY-MM-DD') AS start_date, status`;\n    params = [email, description];\n    break;\n  case 'NO_EMAIL':\n    sql = `SELECT 'NO_EMAIL' AS err`;\n    params = [];\n    break;\n  default:\n    sql = `SELECT 'UNKNOWN' AS err`;\n    params = [];\n}\n\nreturn [{ json: { action, email, sql, params, echo: msgRaw } }];"
+      },
+      "id": "node-detect",
+      "name": "Detect Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-40, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {
+          "queryReplacement": "={{ $json.params }}"
+        }
+      },
+      "id": "node-pg",
+      "name": "Run Action (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [200, 300],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "wip-pg-cred-0001",
+          "name": "WIP Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format a human reply from the DB result + the detected action.\nconst action = $('Detect Command').first().json.action;\nconst email = $('Detect Command').first().json.email;\nconst d = $json || {};\nlet reply = '';\nswitch (action) {\n  case 'CLOCK_IN':\n    reply = d.clock_in ? `\\u2705 Clocked in at ${d.clock_in}.` : `\\u26a0\\ufe0f Could not clock you in (user not found: ${email}).`;\n    break;\n  case 'CLOCK_OUT': {\n    const m = Number(d.total_minutes || 0);\n    reply = d.clock_out ? `\\ud83d\\udc4b Clocked out at ${d.clock_out}. Total today: ${Math.floor(m/60)}h ${m%60}m.` : `\\u26a0\\ufe0f No open clock-in found for today.`;\n    break;\n  }\n  case 'ADD_WORK_ENTRY':\n    reply = d.description ? `\\ud83d\\udcdd Saved work entry: \"${d.description}\" (${d.category||'General'}).` : `\\u26a0\\ufe0f Could not save work entry.`;\n    break;\n  case 'GET_TODAY':\n    reply = `\\ud83d\\udcc5 Today \\u2014 In: ${d.clock_in||'\\u2014'}, Out: ${d.clock_out||'\\u2014'}\\nWork: ${d.work||'(none logged)'}`;\n    break;\n  case 'GET_WEEK': {\n    const days = d.days || [];\n    reply = `\\ud83d\\uddd3\\ufe0f This week:\\n` + (days.length ? days.map(x => `\\u2022 ${x.day}: ${x.clock_in||'\\u2014'}\\u2013${x.clock_out||'\\u2014'}`).join('\\n') : '(no attendance yet)');\n    break;\n  }\n  case 'SUBMIT_WEEK':\n    reply = d.status ? `\\ud83d\\udce4 Week ${d.iso_week} report submitted to your mentor.` : `\\u26a0\\ufe0f Could not submit.`;\n    break;\n  case 'REPORT_SICK':\n    reply = d.status ? `\\ud83e\\udd12 Sick leave logged for ${d.start_date}. Your mentor has been notified.` : `\\u26a0\\ufe0f Could not log sick leave.`;\n    break;\n  case 'NO_EMAIL':\n    reply = `\\u26a0\\ufe0f No email supplied \\u2014 cannot identify the user.`;\n    break;\n  default:\n    reply = `\\ud83e\\udd14 I didn't understand that. Try: \"clock me in\", \"I worked on ...\", \"submit my report\", or \"show my week\".`;\n}\nreturn [{ json: { reply, action, email } }];"
+      },
+      "id": "node-format",
+      "name": "Format Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"reply\": $json.reply, \"action\": $json.action } }}",
+        "options": {}
+      },
+      "id": "node-respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Detect Command", "type": "main", "index": 0 }]] },
+    "Detect Command": { "main": [[{ "node": "Run Action (Postgres)", "type": "main", "index": 0 }]] },
+    "Run Action (Postgres)": { "main": [[{ "node": "Format Reply", "type": "main", "index": 0 }]] },
+    "Format Reply": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

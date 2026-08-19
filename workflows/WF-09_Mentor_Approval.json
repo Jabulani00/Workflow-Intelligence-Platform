@@ -1,0 +1,74 @@
+{
+  "id": "wip-wf-09-approval",
+  "name": "WF-09 Mentor Approval",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "approval",
+        "responseMode": "responseNode",
+        "options": { "allowedOrigins": "*" }
+      },
+      "id": "node-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 300],
+      "webhookId": "wip-approval"
+    },
+    {
+      "parameters": {
+        "jsCode": "// WF-09: A mentor approves / rejects / requests correction on an employee's weekly report.\n// Body: { mentor_email, employee_email, action: APPROVE|REJECT|REQUEST_CORRECTION, iso_week? }\nconst b = $json.body || $json;\nconst mentor = String(b.mentor_email || '').toLowerCase().trim();\nconst employee = String(b.employee_email || '').toLowerCase().trim();\nlet action = String(b.action || 'APPROVE').toUpperCase().trim();\nconst week = (b.iso_week === undefined || b.iso_week === null || b.iso_week === '') ? null : parseInt(b.iso_week, 10);\n\nconst statusMap = { APPROVE: 'APPROVED', REJECT: 'REJECTED', REQUEST_CORRECTION: 'CORRECTION_REQUIRED' };\nif (!statusMap[action]) action = 'APPROVE';\nconst newStatus = statusMap[action];\n\nlet sql, params;\nif (!mentor || !employee) {\n  sql = `SELECT 'BAD_INPUT' AS err`;\n  params = [];\n} else {\n  // Only the employee's assigned mentor may act; only on non-final reports.\n  sql = `WITH m AS (SELECT user_id FROM users WHERE email=$1 AND role='MENTOR'),\n     e AS (SELECT user_id, mentor_id FROM users WHERE email=$2)\nUPDATE weekly_reports w\nSET status=$4,\n    approved_by = CASE WHEN $4='APPROVED' THEN (SELECT user_id FROM m) ELSE NULL END,\n    approved_at = CASE WHEN $4='APPROVED' THEN now() ELSE NULL END\nFROM e, m\nWHERE w.user_id = e.user_id\n  AND e.mentor_id = m.user_id\n  AND w.iso_year = EXTRACT(ISOYEAR FROM CURRENT_DATE)::int\n  AND w.iso_week = COALESCE($3::int, EXTRACT(WEEK FROM CURRENT_DATE)::int)\n  AND w.status IN ('SUBMITTED','UNDER_REVIEW','CORRECTION_REQUIRED')\nRETURNING w.iso_week, w.status`;\n  params = [mentor, employee, week, newStatus];\n}\nreturn [{ json: { action, mentor, employee, sql, params } }];"
+      },
+      "id": "node-build",
+      "name": "Build Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-40, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": { "queryReplacement": "={{ $json.params }}" }
+      },
+      "id": "node-pg",
+      "name": "Run Approval (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [200, 300],
+      "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "wip-pg-cred-0001", "name": "WIP Postgres" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const action = $('Build Action').first().json.action;\nconst employee = $('Build Action').first().json.employee;\nconst d = $json || {};\nlet reply;\nif (d.err === 'BAD_INPUT') {\n  reply = '\\u26a0\\ufe0f mentor_email and employee_email are both required.';\n} else if (!d.status) {\n  reply = `\\u26a0\\ufe0f No matching submitted report for ${employee} (check the mentor is assigned and the week was submitted).`;\n} else if (d.status === 'APPROVED') {\n  reply = `\\u2705 Week ${d.iso_week} report for ${employee} APPROVED and locked.`;\n} else if (d.status === 'REJECTED') {\n  reply = `\\u274c Week ${d.iso_week} report for ${employee} rejected.`;\n} else {\n  reply = `\\u270f\\ufe0f Correction requested on week ${d.iso_week} report for ${employee}.`;\n}\nreturn [{ json: { reply, action, status: d.status || null } }];"
+      },
+      "id": "node-format",
+      "name": "Format Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"reply\": $json.reply, \"status\": $json.status } }}",
+        "options": {}
+      },
+      "id": "node-respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Build Action", "type": "main", "index": 0 }]] },
+    "Build Action": { "main": [[{ "node": "Run Approval (Postgres)", "type": "main", "index": 0 }]] },
+    "Run Approval (Postgres)": { "main": [[{ "node": "Format Reply", "type": "main", "index": 0 }]] },
+    "Format Reply": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

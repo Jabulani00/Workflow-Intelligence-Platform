@@ -1,0 +1,39 @@
+{
+  "id": "wip-wf-11-leave",
+  "name": "WF-11 Leave Request",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "leave", "responseMode": "responseNode", "options": { "allowedOrigins": "*" } },
+      "id": "node-webhook", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-260, 300], "webhookId": "wip-leave"
+    },
+    {
+      "parameters": {
+        "jsCode": "// WF-11: structured leave request. Body: { email, leave_type, start_date, end_date, reason }\nconst b = $json.body || $json;\nconst email = String(b.email || '').toLowerCase().trim();\nconst type = String(b.leave_type || '').toUpperCase().trim();\nconst start = String(b.start_date || '').trim();\nconst end = String(b.end_date || start).trim();\nconst reason = b.reason || '';\nconst valid = ['ANNUAL','SICK','FAMILY','STUDY','OTHER'];\nconst dateRe = /^\\d{4}-\\d{2}-\\d{2}$/;\n\nlet err = null;\nif (!email) err = 'email is required';\nelse if (!valid.includes(type)) err = 'leave_type must be one of ' + valid.join(', ');\nelse if (!dateRe.test(start)) err = 'start_date must be YYYY-MM-DD';\nelse if (!dateRe.test(end)) err = 'end_date must be YYYY-MM-DD';\nelse if (end < start) err = 'end_date cannot be before start_date';\n\nlet sql, params;\nif (err) { sql = `SELECT 'ERR' AS err`; params = []; }\nelse {\n  sql = `WITH u AS (SELECT user_id, mentor_id FROM users WHERE email=$1),\nins AS (\n  INSERT INTO leave_requests (user_id, leave_type, start_date, end_date, reason, status)\n  SELECT user_id, $2, $3::date, $4::date, $5, 'SUBMITTED' FROM u\n  RETURNING leave_id, leave_type, start_date, end_date\n),\nnotif AS (\n  INSERT INTO notifications (user_id, type, message)\n  SELECT u.mentor_id, 'LEAVE_REQUEST',\n    'Leave (' || ins.leave_type || ') from ' || $1 || ' ' || to_char(ins.start_date,'YYYY-MM-DD') || ' to ' || to_char(ins.end_date,'YYYY-MM-DD')\n  FROM ins, u WHERE u.mentor_id IS NOT NULL\n  RETURNING 1\n)\nSELECT ins.leave_type, to_char(ins.start_date,'YYYY-MM-DD') AS start_date, to_char(ins.end_date,'YYYY-MM-DD') AS end_date FROM ins`;\n  params = [email, type, start, end, reason];\n}\nreturn [{ json: { err, email, type, sql, params } }];"
+      },
+      "id": "node-build", "name": "Build Leave", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-40, 300]
+    },
+    {
+      "parameters": { "operation": "executeQuery", "query": "={{ $json.sql }}", "options": { "queryReplacement": "={{ $json.params }}" } },
+      "id": "node-pg", "name": "Run Leave (Postgres)", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [200, 300], "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "wip-pg-cred-0001", "name": "WIP Postgres" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const built = $('Build Leave').first().json;\nconst d = $json || {};\nlet reply;\nif (built.err) reply = '\\u26a0\\ufe0f ' + built.err;\nelse if (!d.leave_type) reply = `\\u26a0\\ufe0f Could not create leave (user not found: ${built.email}).`;\nelse reply = `\\ud83d\\udcc4 ${d.leave_type} leave requested for ${d.start_date} \\u2192 ${d.end_date}. Sent to your mentor.`;\nreturn [{ json: { reply, leave_type: d.leave_type || null } }];"
+      },
+      "id": "node-format", "name": "Format Reply", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [440, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ { \"reply\": $json.reply } }}", "options": {} },
+      "id": "node-respond", "name": "Respond", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.1, "position": [660, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Build Leave", "type": "main", "index": 0 }]] },
+    "Build Leave": { "main": [[{ "node": "Run Leave (Postgres)", "type": "main", "index": 0 }]] },
+    "Run Leave (Postgres)": { "main": [[{ "node": "Format Reply", "type": "main", "index": 0 }]] },
+    "Format Reply": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

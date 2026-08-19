@@ -1,0 +1,39 @@
+{
+  "id": "wip-wf-16-admin",
+  "name": "WF-16 Admin Console",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "admin", "responseMode": "responseNode", "options": { "allowedOrigins": "*" } },
+      "id": "node-webhook", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-260, 300], "webhookId": "wip-admin"
+    },
+    {
+      "parameters": {
+        "jsCode": "// WF-16: ADMIN-only console. Body: { admin_email, action, target_email?, department? }\n// Actions: TEAM_SUMMARY | OUTSTANDING_REPORTS | LIST_PENDING | APPROVE_REGISTRATION | REJECT_REGISTRATION\nconst b = $json.body || $json;\nconst admin = String(b.admin_email || '').toLowerCase().trim();\nlet action = String(b.action || 'TEAM_SUMMARY').toUpperCase().trim();\nconst target = String(b.target_email || '').toLowerCase().trim();\nconst dept = String(b.department || '').trim();\nlet err = null, sql, params;\n\nif (!admin) { err = 'admin_email is required'; }\nelse {\n  const guard = `WITH a AS (SELECT user_id FROM users WHERE email=$1 AND role='ADMIN')`;\n  switch (action) {\n    case 'TEAM_SUMMARY':\n      sql = `${guard}\nSELECT (SELECT count(*) FROM a)::int AS is_admin,\n CASE WHEN EXISTS(SELECT 1 FROM a) THEN (\n   SELECT COALESCE(json_agg(row_to_json(t)),'[]') FROM (\n     SELECT u.full_name, u.email, u.department,\n       (SELECT count(*) FROM attendance x WHERE x.user_id=u.user_id)::int AS days,\n       (SELECT count(*) FROM daily_work_entries w WHERE w.user_id=u.user_id)::int AS entries,\n       (SELECT count(*) FROM weekly_reports r WHERE r.user_id=u.user_id AND r.status='APPROVED')::int AS approved\n     FROM users u WHERE u.role='EMPLOYEE' AND ($2='' OR u.department=$2)\n     ORDER BY u.full_name\n   ) t\n ) ELSE NULL END AS data`;\n      params = [admin, dept];\n      break;\n    case 'OUTSTANDING_REPORTS':\n      sql = `${guard}\nSELECT (SELECT count(*) FROM a)::int AS is_admin,\n CASE WHEN EXISTS(SELECT 1 FROM a) THEN (\n   SELECT COALESCE(json_agg(row_to_json(t)),'[]') FROM (\n     SELECT u.full_name, u.email FROM users u\n     WHERE u.role='EMPLOYEE' AND u.status='ACTIVE'\n     AND NOT EXISTS (SELECT 1 FROM weekly_reports w WHERE w.user_id=u.user_id\n        AND w.iso_year=EXTRACT(ISOYEAR FROM CURRENT_DATE)::int\n        AND w.iso_week=EXTRACT(WEEK FROM CURRENT_DATE)::int\n        AND w.status IN ('SUBMITTED','UNDER_REVIEW','APPROVED','LOCKED'))\n     ORDER BY u.full_name\n   ) t\n ) ELSE NULL END AS data`;\n      params = [admin, ''];\n      break;\n    case 'LIST_PENDING':\n      sql = `${guard}\nSELECT (SELECT count(*) FROM a)::int AS is_admin,\n CASE WHEN EXISTS(SELECT 1 FROM a) THEN (\n   SELECT COALESCE(json_agg(row_to_json(t)),'[]') FROM (\n     SELECT full_name, email, department, status FROM users\n     WHERE status IN ('PENDING','UNDER_REVIEW') ORDER BY created_at\n   ) t\n ) ELSE NULL END AS data`;\n      params = [admin, ''];\n      break;\n    case 'APPROVE_REGISTRATION':\n    case 'REJECT_REGISTRATION': {\n      const newStatus = action === 'APPROVE_REGISTRATION' ? 'ACTIVE' : 'REJECTED';\n      const auditAction = action === 'APPROVE_REGISTRATION' ? 'USER_APPROVED' : 'USER_REJECTED';\n      const nType = action === 'APPROVE_REGISTRATION' ? 'REGISTRATION_APPROVED' : 'REGISTRATION_REJECTED';\n      const nMsg = action === 'APPROVE_REGISTRATION' ? 'Your registration has been approved. Welcome!' : 'Your registration was not approved.';\n      sql = `${guard},\nupd AS (\n  UPDATE users u SET status='${newStatus}'\n  FROM a WHERE u.email=$2 AND u.status IN ('PENDING','UNDER_REVIEW')\n  RETURNING u.user_id, u.email, u.status\n),\naud AS (\n  INSERT INTO audit_logs (actor_id, action, record_id, metadata)\n  SELECT (SELECT user_id FROM a), '${auditAction}', upd.user_id, json_build_object('email', upd.email)\n  FROM upd RETURNING 1\n),\nnotif AS (\n  INSERT INTO notifications (user_id, type, message)\n  SELECT upd.user_id, '${nType}', '${nMsg}' FROM upd RETURNING 1\n)\nSELECT (SELECT count(*) FROM a)::int AS is_admin,\n       (SELECT COALESCE(json_agg(row_to_json(upd)),'[]') FROM upd) AS data`;\n      params = [admin, target];\n      break;\n    }\n    default:\n      err = 'Unknown action: ' + action;\n  }\n}\nif (err) { sql = `SELECT 'ERR' AS err`; params = []; }\nreturn [{ json: { err, action, admin, target, sql, params } }];"
+      },
+      "id": "node-build", "name": "Build Admin", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-40, 300]
+    },
+    {
+      "parameters": { "operation": "executeQuery", "query": "={{ $json.sql }}", "options": { "queryReplacement": "={{ $json.params }}" } },
+      "id": "node-pg", "name": "Run Admin (Postgres)", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [200, 300], "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "wip-pg-cred-0001", "name": "WIP Postgres" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const built = $('Build Admin').first().json;\nconst action = built.action;\nconst d = $json || {};\nlet reply, data = d.data || null;\nconst isAdmin = Number(d.is_admin);\nif (built.err) { reply = '\\u26a0\\ufe0f ' + built.err; }\nelse if (isAdmin === 0) { reply = '\\u26d4 Access denied \\u2014 ADMIN role required.'; data = null; }\nelse {\n  const arr = Array.isArray(data) ? data : [];\n  switch (action) {\n    case 'TEAM_SUMMARY':\n      reply = `\\ud83d\\udcca Team summary (${arr.length}):\\n` + (arr.map(r => `\\u2022 ${r.full_name} \\u2014 ${r.days} day(s), ${r.entries} entries, ${r.approved} approved`).join('\\n') || '(no employees)');\n      break;\n    case 'OUTSTANDING_REPORTS':\n      reply = arr.length ? `\\u23f0 Outstanding weekly reports (${arr.length}):\\n` + arr.map(r => `\\u2022 ${r.full_name} (${r.email})`).join('\\n') : '\\u2705 Everyone has submitted this week.';\n      break;\n    case 'LIST_PENDING':\n      reply = arr.length ? `\\ud83d\\udd53 Pending registrations (${arr.length}):\\n` + arr.map(r => `\\u2022 ${r.full_name} (${r.email}) \\u2014 ${r.department||'?'}`).join('\\n') : '\\u2705 No pending registrations.';\n      break;\n    case 'APPROVE_REGISTRATION':\n      reply = arr.length ? `\\u2705 Approved ${arr[0].email} \\u2014 status ${arr[0].status}.` : `\\u26a0\\ufe0f No pending user matched ${built.target}.`;\n      break;\n    case 'REJECT_REGISTRATION':\n      reply = arr.length ? `\\u274c Rejected ${arr[0].email} \\u2014 status ${arr[0].status}.` : `\\u26a0\\ufe0f No pending user matched ${built.target}.`;\n      break;\n    default:\n      reply = 'Done.';\n  }\n}\nreturn [{ json: { reply, action, data } }];"
+      },
+      "id": "node-format", "name": "Format Reply", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [440, 300]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ { \"reply\": $json.reply, \"data\": $json.data } }}", "options": {} },
+      "id": "node-respond", "name": "Respond", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.1, "position": [660, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Build Admin", "type": "main", "index": 0 }]] },
+    "Build Admin": { "main": [[{ "node": "Run Admin (Postgres)", "type": "main", "index": 0 }]] },
+    "Run Admin (Postgres)": { "main": [[{ "node": "Format Reply", "type": "main", "index": 0 }]] },
+    "Format Reply": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
