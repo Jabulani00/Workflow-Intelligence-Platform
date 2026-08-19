@@ -1,0 +1,11 @@
+# Normalize line endings to avoid CRLF/LF churn across machines
+* text=auto eol=lf
+
+# Scripts that must keep their platform endings
+*.ps1 text eol=crlf
+*.sh  text eol=lf
+
+# Treat common binaries as binary
+*.png binary
+*.jpg binary
+*.pdf binary

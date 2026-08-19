@@ -166,3 +166,9 @@ Then run the two SQL migrations against your Supabase project (section 6).
 ### Natural next steps
 Gemini AI node for free-text intent, WhatsApp/email delivery of notifications,
 document upload to Supabase Storage, monthly admin exports (Excel/PDF).
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
