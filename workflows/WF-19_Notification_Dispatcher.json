@@ -1,0 +1,60 @@
+{
+  "id": "wip-wf-19-dispatch",
+  "name": "WF-19 Notification Dispatcher",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "dispatch", "options": { "allowedOrigins": "*" } },
+      "id": "node-webhook", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-260, 200], "webhookId": "wip-dispatch"
+    },
+    {
+      "parameters": { "rule": { "interval": [ { "field": "cronExpression", "expression": "*/5 * * * *" } ] } },
+      "id": "node-cron", "name": "Every 5 min", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [-260, 380]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT n.notification_id, u.email, u.full_name, n.type, n.message\nFROM notifications n JOIN users u ON u.user_id = n.user_id\nWHERE n.status = 'PENDING'\nORDER BY n.created_at\nLIMIT 25",
+        "options": {}
+      },
+      "id": "node-getpending", "name": "Get Pending", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [-20, 300], "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "wip-pg-cred-0001", "name": "WIP Postgres" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build one email per pending notification. Fake .wip.local demo addresses are\n// routed to a demo inbox so the demo actually delivers; real domains pass through.\nconst DEMO_INBOX = 'stars.innovationlab@gmail.com';\nconst out = [];\nfor (const it of items) {\n  const j = it.json || {};\n  if (!j.notification_id) continue; // skip the empty 'always output' item when nothing pending\n  const email = String(j.email || '');\n  const to = email.endsWith('.wip.local') ? DEMO_INBOX : email;\n  const pretty = String(j.type || 'NOTIFICATION').replace(/_/g, ' ').toLowerCase().replace(/\\b\\w/g, c => c.toUpperCase());\n  out.push({ json: {\n    notification_id: j.notification_id,\n    send_to: to,\n    subject: `[WIP] ${pretty}`,\n    body: `Hi ${j.full_name || ''},\\n\\n${j.message || ''}\\n\\n— WIP · Work. Report. Approve. Done.`\n  } });\n}\nreturn out;"
+      },
+      "id": "node-resolve", "name": "Resolve Recipient", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "stars.innovationlab@gmail.com",
+        "toEmail": "={{ $json.send_to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "node-send", "name": "Send Email", "type": "n8n-nodes-base.emailSend", "typeVersion": 2.1, "position": [420, 300],
+      "credentials": { "smtp": { "id": "wip-smtp-cred-0001", "name": "WIP SMTP" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE notifications SET status='SENT' WHERE notification_id = $1",
+        "options": { "queryReplacement": "={{ [$('Resolve Recipient').item.json.notification_id] }}" }
+      },
+      "id": "node-marksent", "name": "Mark Sent", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [640, 300],
+      "credentials": { "postgres": { "id": "wip-pg-cred-0001", "name": "WIP Postgres" } }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Get Pending", "type": "main", "index": 0 }]] },
+    "Every 5 min": { "main": [[{ "node": "Get Pending", "type": "main", "index": 0 }]] },
+    "Get Pending": { "main": [[{ "node": "Resolve Recipient", "type": "main", "index": 0 }]] },
+    "Resolve Recipient": { "main": [[{ "node": "Send Email", "type": "main", "index": 0 }]] },
+    "Send Email": { "main": [[{ "node": "Mark Sent", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

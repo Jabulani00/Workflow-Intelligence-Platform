@@ -57,6 +57,20 @@ The side panel does mentor approvals. Edit `web/index.html` and refresh — ngin
 | WF-16 | Admin Console   | `POST /webhook/admin`                 | **ADMIN-only** reporting + registration review |
 | WF-21 | Registration    | `POST /webhook/register`              | Public self-registration (PENDING)            |
 | WF-14 | Reminder Engine | Schedule (weekdays 16:00)             | Flags employees with no weekly report         |
+| WF-19 | Notification Dispatcher | `POST /webhook/dispatch` + schedule (5 min) | Emails PENDING notifications via SMTP, marks them SENT |
+
+### AI fallback (WF-02)
+The chatbot tries **deterministic keyword detection first** (no AI). Only when nothing
+matches does it call **Gemini** (`gemini-flash-lite-latest`) to classify the message into a
+validated intent — with retries and a graceful "didn't understand" fallback. A small
+deterministic guard corrects the model when it over-anchors on words like "week"/"today".
+This is the token-saving design from doc §16–18: AI only when needed.
+
+### Notifications → email (WF-19)
+Workflows write to the `notifications` table (status `PENDING`). WF-19 picks them up
+(on the `/webhook/dispatch` call or every 5 minutes), emails each recipient via Gmail SMTP,
+and marks them `SENT`. Demo `*.wip.local` addresses are routed to a demo inbox so the demo
+actually delivers; real domains pass through untouched.
 
 ### Examples
 ```bash
@@ -164,8 +178,11 @@ Then run the two SQL migrations against your Supabase project (section 6).
 | Audit (§39)                          | `audit_logs` (registration/approval events)      |
 
 ### Natural next steps
-Gemini AI node for free-text intent, WhatsApp/email delivery of notifications,
-document upload to Supabase Storage, monthly admin exports (Excel/PDF).
+WhatsApp delivery (Twilio) alongside email, document upload to Supabase Storage,
+monthly admin exports (Excel/PDF), and richer few-shot tuning of the AI classifier.
+
+> Note: WF-19's 5-minute schedule will email the demo inbox whenever new notifications
+> appear. Deactivate that schedule in the n8n editor if you don't want ongoing demo mail.
 
 ---
 

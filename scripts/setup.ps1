@@ -8,6 +8,7 @@ $ids = [ordered]@{
   "WF-11_Leave_Request"   = "wip-wf-11-leave"
   "WF-14_Reminder_Engine" = "wip-wf-14-reminder"
   "WF-16_Admin_Console"   = "wip-wf-16-admin"
+  "WF-19_Notification_Dispatcher" = "wip-wf-19-dispatch"
   "WF-21_Registration"    = "wip-wf-21-register"
 }
 docker cp "$root/workflows/_credentials.json" wip-n8n:/tmp/_credentials.json
