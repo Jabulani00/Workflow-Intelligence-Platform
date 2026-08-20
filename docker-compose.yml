@@ -32,6 +32,13 @@ services:
       - WEBHOOK_URL=http://localhost:5678/
       - GENERIC_TIMEZONE=Africa/Johannesburg
       - TZ=Africa/Johannesburg
+      # --- WIP notification config (values come from .env, git-ignored) ---
+      - WIP_MAIL_FROM=${WIP_MAIL_FROM:-}
+      - WIP_DEMO_INBOX=${WIP_DEMO_INBOX:-}
+      - WIP_DEMO_WHATSAPP=${WIP_DEMO_WHATSAPP:-}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_WHATSAPP_FROM=${TWILIO_WHATSAPP_FROM:-}
+      - TWILIO_CONTENT_SID=${TWILIO_CONTENT_SID:-}
       # --- Security / task runners ---
       - N8N_RUNNERS_ENABLED=true
       - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true

@@ -5,38 +5,71 @@
   "nodes": [
     {
       "parameters": { "httpMethod": "POST", "path": "dispatch", "options": { "allowedOrigins": "*" } },
-      "id": "node-webhook", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-260, 200], "webhookId": "wip-dispatch"
+      "id": "node-webhook", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-320, 200], "webhookId": "wip-dispatch"
     },
     {
       "parameters": { "rule": { "interval": [ { "field": "cronExpression", "expression": "*/5 * * * *" } ] } },
-      "id": "node-cron", "name": "Every 5 min", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [-260, 380]
+      "id": "node-cron", "name": "Every 5 min", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [-320, 380]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT n.notification_id, u.email, u.full_name, n.type, n.message\nFROM notifications n JOIN users u ON u.user_id = n.user_id\nWHERE n.status = 'PENDING'\nORDER BY n.created_at\nLIMIT 25",
+        "query": "SELECT n.notification_id, u.email, u.whatsapp, u.full_name, n.type, n.message\nFROM notifications n JOIN users u ON u.user_id = n.user_id\nWHERE n.status = 'PENDING'\nORDER BY n.created_at\nLIMIT 25",
         "options": {}
       },
-      "id": "node-getpending", "name": "Get Pending", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [-20, 300], "alwaysOutputData": true,
+      "id": "node-getpending", "name": "Get Pending", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [-100, 300], "alwaysOutputData": true,
       "credentials": { "postgres": { "id": "wip-pg-cred-0001", "name": "WIP Postgres" } }
     },
     {
       "parameters": {
-        "jsCode": "// Build one email per pending notification. Fake .wip.local demo addresses are\n// routed to a demo inbox so the demo actually delivers; real domains pass through.\nconst DEMO_INBOX = 'stars.innovationlab@gmail.com';\nconst out = [];\nfor (const it of items) {\n  const j = it.json || {};\n  if (!j.notification_id) continue; // skip the empty 'always output' item when nothing pending\n  const email = String(j.email || '');\n  const to = email.endsWith('.wip.local') ? DEMO_INBOX : email;\n  const pretty = String(j.type || 'NOTIFICATION').replace(/_/g, ' ').toLowerCase().replace(/\\b\\w/g, c => c.toUpperCase());\n  out.push({ json: {\n    notification_id: j.notification_id,\n    send_to: to,\n    subject: `[WIP] ${pretty}`,\n    body: `Hi ${j.full_name || ''},\\n\\n${j.message || ''}\\n\\n— WIP · Work. Report. Approve. Done.`\n  } });\n}\nreturn out;"
+        "jsCode": "// Build email + WhatsApp targets per pending notification.\n// Demo *.wip.local users are routed to demo targets so the demo delivers; real users pass through.\n// Config comes from environment (.env), so no PII/secrets live in this workflow.\nconst DEMO_INBOX = $env.WIP_DEMO_INBOX || '';\nconst DEMO_WHATSAPP = $env.WIP_DEMO_WHATSAPP || '';\nconst out = [];\nfor (const it of items) {\n  const j = it.json || {};\n  if (!j.notification_id) continue;\n  const email = String(j.email || '');\n  const isDemo = email.endsWith('.wip.local');\n  const to = isDemo ? DEMO_INBOX : email;\n  const rawWa = String(j.whatsapp || '').trim();\n  const waTo = isDemo ? DEMO_WHATSAPP : rawWa;\n  const pretty = String(j.type || 'NOTIFICATION').replace(/_/g, ' ').toLowerCase().replace(/\\b\\w/g, c => c.toUpperCase());\n  const body = `Hi ${j.full_name || ''},\\n\\n${j.message || ''}\\n\\n\\u2014 WIP \\u00b7 Work. Report. Approve. Done.`;\n  // WhatsApp template variable must be a single line (no newlines / long runs of spaces).\n  const waText = `${pretty}: ${j.message || ''}`.replace(/\\s+/g, ' ').trim().slice(0, 600);\n  out.push({ json: { notification_id: j.notification_id, send_to: to, wa_to: waTo, wa_text: waText, subject: `[WIP] ${pretty}`, body } });\n}\nreturn out;"
       },
-      "id": "node-resolve", "name": "Resolve Recipient", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [200, 300]
+      "id": "node-resolve", "name": "Resolve Recipient", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [120, 300]
     },
     {
       "parameters": {
-        "fromEmail": "stars.innovationlab@gmail.com",
+        "fromEmail": "={{ $env.WIP_MAIL_FROM }}",
         "toEmail": "={{ $json.send_to }}",
         "subject": "={{ $json.subject }}",
         "emailFormat": "text",
         "text": "={{ $json.body }}",
         "options": {}
       },
-      "id": "node-send", "name": "Send Email", "type": "n8n-nodes-base.emailSend", "typeVersion": 2.1, "position": [420, 300],
+      "id": "node-send", "name": "Send Email", "type": "n8n-nodes-base.emailSend", "typeVersion": 2.1, "position": [340, 300],
       "credentials": { "smtp": { "id": "wip-smtp-cred-0001", "name": "WIP SMTP" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose", "version": 2 },
+          "conditions": [ { "id": "c1", "leftValue": "={{ $('Resolve Recipient').item.json.wa_to }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } } ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-wa", "name": "Has WhatsApp?", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [560, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{ $env.TWILIO_ACCOUNT_SID }}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "To", "value": "=whatsapp:{{ $('Resolve Recipient').item.json.wa_to }}" },
+            { "name": "From", "value": "=whatsapp:{{ $env.TWILIO_WHATSAPP_FROM }}" },
+            { "name": "ContentSid", "value": "={{ $env.TWILIO_CONTENT_SID }}" },
+            { "name": "ContentVariables", "value": "={{ JSON.stringify({ '1': $('Resolve Recipient').item.json.wa_text }) }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-wa", "name": "Send WhatsApp", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [780, 200],
+      "credentials": { "httpBasicAuth": { "id": "wip-twilio-http-0001", "name": "WIP Twilio Basic" } },
       "onError": "continueRegularOutput"
     },
     {
@@ -45,7 +78,7 @@
         "query": "UPDATE notifications SET status='SENT' WHERE notification_id = $1",
         "options": { "queryReplacement": "={{ [$('Resolve Recipient').item.json.notification_id] }}" }
       },
-      "id": "node-marksent", "name": "Mark Sent", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [640, 300],
+      "id": "node-marksent", "name": "Mark Sent", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [1000, 300],
       "credentials": { "postgres": { "id": "wip-pg-cred-0001", "name": "WIP Postgres" } }
     }
   ],
@@ -54,7 +87,9 @@
     "Every 5 min": { "main": [[{ "node": "Get Pending", "type": "main", "index": 0 }]] },
     "Get Pending": { "main": [[{ "node": "Resolve Recipient", "type": "main", "index": 0 }]] },
     "Resolve Recipient": { "main": [[{ "node": "Send Email", "type": "main", "index": 0 }]] },
-    "Send Email": { "main": [[{ "node": "Mark Sent", "type": "main", "index": 0 }]] }
+    "Send Email": { "main": [[{ "node": "Has WhatsApp?", "type": "main", "index": 0 }]] },
+    "Has WhatsApp?": { "main": [ [{ "node": "Send WhatsApp", "type": "main", "index": 0 }], [{ "node": "Mark Sent", "type": "main", "index": 0 }] ] },
+    "Send WhatsApp": { "main": [[{ "node": "Mark Sent", "type": "main", "index": 0 }]] }
   },
   "settings": { "executionOrder": "v1" }
 }

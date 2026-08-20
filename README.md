@@ -66,11 +66,20 @@ validated intent — with retries and a graceful "didn't understand" fallback. A
 deterministic guard corrects the model when it over-anchors on words like "week"/"today".
 This is the token-saving design from doc §16–18: AI only when needed.
 
-### Notifications → email (WF-19)
+### Notifications → email + WhatsApp (WF-19)
 Workflows write to the `notifications` table (status `PENDING`). WF-19 picks them up
-(on the `/webhook/dispatch` call or every 5 minutes), emails each recipient via Gmail SMTP,
-and marks them `SENT`. Demo `*.wip.local` addresses are routed to a demo inbox so the demo
-actually delivers; real domains pass through untouched.
+(on the `/webhook/dispatch` call or every 5 minutes) and delivers each on **two channels**:
+- **Email** via Gmail SMTP (`Send Email` node).
+- **WhatsApp** via the Twilio API (`Send WhatsApp` HTTP node), then marks the row `SENT`.
+
+Demo `*.wip.local` users are routed to a demo inbox / demo WhatsApp number so the demo
+delivers; real users pass through untouched.
+
+**Twilio trial note:** trial WhatsApp sandbox accounts block free-form text and require an
+approved **content template** (`ContentSid`), so the WhatsApp node sends via the template
+with the notification text injected as variable `{{1}}`. The `from` is your sandbox number
+(e.g. `+14155238886` or your assigned one), and recipients must first join the sandbox
+(`join <code>` to that number). On a paid sender you can switch to free-form `Body` text.
 
 ### Examples
 ```bash
