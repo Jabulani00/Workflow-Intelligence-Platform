@@ -58,6 +58,22 @@ The side panel does mentor approvals. Edit `web/index.html` and refresh — ngin
 | WF-21 | Registration    | `POST /webhook/register`              | Public self-registration (PENDING)            |
 | WF-14 | Reminder Engine | Schedule (weekdays 16:00)             | Flags employees with no weekly report         |
 | WF-19 | Notification Dispatcher | `POST /webhook/dispatch` + schedule (5 min) | Emails PENDING notifications via SMTP, marks them SENT |
+| WF-20 | WhatsApp Inbound | `POST /webhook/wa-inbound` (Twilio) | Two-way WhatsApp bot: identifies you by phone number, runs WF-02, replies via TwiML |
+
+### Two-way WhatsApp bot (WF-20)
+Text the WIP system on WhatsApp ("clock me in", "submit my report") and it replies.
+You are identified by your **phone number** (set `users.whatsapp`), so the number is your
+login (doc §14). WF-20 reuses the WF-02 brain (AI included) and answers with TwiML — which
+is allowed free-form on the trial sandbox because it's a reply within your open message session.
+
+**Going live (needs a public URL so Twilio can reach n8n):**
+1. Start a tunnel: `./scripts/start-whatsapp-tunnel.ps1` (localtunnel), or `ngrok http 5678`,
+   or `cloudflared tunnel --url http://localhost:5678`. Copy the printed https URL.
+2. Twilio Console → Messaging → Try it out → **Sandbox settings** → set
+   **"When a message comes in"** to `<public-url>/webhook/wa-inbound` (POST). Save.
+3. From your phone (joined to the sandbox), text `clock me in`.
+> The tunnel is temporary (URL changes, dies when stopped). For a permanent bot, host n8n
+> on a server (n8n Cloud, a VPS, Railway…) with a stable public URL.
 
 ### AI fallback (WF-02)
 The chatbot tries **deterministic keyword detection first** (no AI). Only when nothing

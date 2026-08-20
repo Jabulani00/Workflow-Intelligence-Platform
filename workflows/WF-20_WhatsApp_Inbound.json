@@ -1,0 +1,60 @@
+{
+  "id": "wip-wf-20-wa-inbound",
+  "name": "WF-20 WhatsApp Inbound",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "wa-inbound", "responseMode": "responseNode", "options": {} },
+      "id": "node-webhook", "name": "Twilio Inbound", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-360, 300], "webhookId": "wip-wa-inbound"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Twilio posts inbound WhatsApp as form fields. Extract sender number + text.\nconst b = $json.body || $json;\nconst from = String(b.From || '').replace('whatsapp:', '').trim();\nconst text = String(b.Body || '').trim();\nreturn [{ json: { from, text } }];"
+      },
+      "id": "node-parse", "name": "Parse Inbound", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-140, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT email, full_name FROM users WHERE whatsapp = $1 AND status='ACTIVE' LIMIT 1",
+        "options": { "queryReplacement": "={{ [$json.from] }}" }
+      },
+      "id": "node-find", "name": "Find User", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [80, 300], "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "wip-pg-cred-0001", "name": "WIP Postgres" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:5678/webhook/chatbot",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"email\": ($json.email || \"\"), \"message\": $('Parse Inbound').first().json.text } }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "node-brain", "name": "Call WF-02 Brain", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [300, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Wrap the chatbot reply in TwiML so Twilio delivers it as a WhatsApp reply.\nconst found = $('Find User').first().json;\nlet reply;\nif (!found || !found.email) {\n  reply = 'Your WhatsApp number is not registered in WIP yet. Please contact your administrator.';\n} else {\n  reply = ($json && $json.reply) ? $json.reply : 'Sorry, I could not process that right now. Please try again.';\n}\nfunction esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); }\nconst xml = `<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${esc(reply)}</Message></Response>`;\nreturn [{ json: { xml } }];"
+      },
+      "id": "node-twiml", "name": "Build TwiML", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.xml }}",
+        "options": { "responseHeaders": { "entries": [ { "name": "Content-Type", "value": "text/xml" } ] } }
+      },
+      "id": "node-respond", "name": "Respond TwiML", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.1, "position": [740, 300]
+    }
+  ],
+  "connections": {
+    "Twilio Inbound": { "main": [[{ "node": "Parse Inbound", "type": "main", "index": 0 }]] },
+    "Parse Inbound": { "main": [[{ "node": "Find User", "type": "main", "index": 0 }]] },
+    "Find User": { "main": [[{ "node": "Call WF-02 Brain", "type": "main", "index": 0 }]] },
+    "Call WF-02 Brain": { "main": [[{ "node": "Build TwiML", "type": "main", "index": 0 }]] },
+    "Build TwiML": { "main": [[{ "node": "Respond TwiML", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
