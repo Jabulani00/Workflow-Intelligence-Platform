@@ -44,7 +44,7 @@ Data survives restarts (Docker volumes `postgres_data`, `n8n_data`).
 A polished conversational UI lives in **`vercel-app/`** (chat, quick commands, dark mode,
 and a Tools drawer for mentor approval / admin / registration).
 
-- **Locally:** open **http://localhost:8080** (nginx serves `vercel-app/public`). The page
+- **Locally:** open **http://localhost:8080** (nginx serves `vercel-app/index.html`). The page
   detects localhost and calls the n8n webhooks directly (CORS enabled).
 - **Deployed (Vercel):** the same page calls same-origin `/api/*` serverless proxies that
   forward to your public n8n — no CORS, and the n8n URL stays server-side.

@@ -64,7 +64,7 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ./vercel-app/public:/usr/share/nginx/html:ro
+      - ./vercel-app/index.html:/usr/share/nginx/html/index.html:ro
     depends_on:
       - n8n
 

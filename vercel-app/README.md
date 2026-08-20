@@ -5,10 +5,10 @@ proxy functions** that forward to your n8n webhooks — so the browser never tal
 directly (no CORS, and your n8n URL stays server-side).
 
 ```
-vercel-app/
-├── public/index.html     ← the chatbot UI (environment-aware)
-├── api/                  ← Vercel serverless functions (proxies to n8n)
-│   ├── _lib.js           ← shared proxy helper (not a route)
+vercel-app/            ← set this as the Vercel "Root Directory"
+├── index.html         ← the chatbot UI (environment-aware), served at /
+├── api/               ← Vercel serverless functions (proxies to n8n)
+│   ├── _lib.js        ← shared proxy helper (not a route)
 │   ├── chat.js  approval.js  admin.js  register.js  health.js
 ├── vercel.json
 └── package.json
