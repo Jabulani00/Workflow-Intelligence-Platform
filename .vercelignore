@@ -1,0 +1,8 @@
+# Keep the Vercel deploy lean — these aren't needed by the frontend.
+db/
+workflows/
+scripts/
+docker-compose.yml
+.gitattributes
+LICENSE
+*.md
