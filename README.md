@@ -41,9 +41,18 @@ Data survives restarts (Docker volumes `postgres_data`, `n8n_data`).
 
 ## 3. Web interface
 
-Open **http://localhost:8080**. Choose who you're acting as, then type or click a command
-chip. The page calls the n8n webhooks directly (CORS enabled), which run against Supabase.
-The side panel does mentor approvals. Edit `web/index.html` and refresh — nginx serves it live.
+A polished conversational UI lives in **`vercel-app/`** (chat, quick commands, dark mode,
+and a Tools drawer for mentor approval / admin / registration).
+
+- **Locally:** open **http://localhost:8080** (nginx serves `vercel-app/public`). The page
+  detects localhost and calls the n8n webhooks directly (CORS enabled).
+- **Deployed (Vercel):** the same page calls same-origin `/api/*` serverless proxies that
+  forward to your public n8n — no CORS, and the n8n URL stays server-side.
+
+**Deploy to Vercel:** import the repo on vercel.com, set **Root Directory = `vercel-app`**,
+add env var **`N8N_BASE_URL`** = your public n8n URL, and deploy. Full steps in
+[`vercel-app/README.md`](vercel-app/README.md). (n8n must be publicly reachable — hosted or
+via a tunnel — since Vercel can't reach `localhost`.)
 
 ---
 

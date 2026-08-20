@@ -9,6 +9,9 @@ workflows/_credentials.json
 # ─── Local / generated ───
 *.log
 scratchpad/
+node_modules/
+.vercel/
+vercel-app/.env
 
 # ─── OS junk ───
 Thumbs.db

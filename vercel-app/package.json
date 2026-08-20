@@ -1,0 +1,7 @@
+{
+  "name": "wip-chatbot-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WIP conversational frontend — static UI + serverless proxies to n8n.",
+  "engines": { "node": ">=18" }
+}
